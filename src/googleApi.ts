@@ -2,6 +2,40 @@ export async function getAccessToken(): Promise<string | null> {
   return localStorage.getItem('donna_access_token');
 }
 
+export async function verifyTokenScopes(token: string): Promise<{
+  valid: boolean;
+  scopes: string[];
+  hasCalendar: boolean;
+  hasGmail: boolean;
+  hasTasks: boolean;
+}> {
+  try {
+    const res = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`);
+    if (!res.ok) {
+      return { valid: false, scopes: [], hasCalendar: false, hasGmail: false, hasTasks: false };
+    }
+    const data = await res.json();
+    const scopesStr = data.scope || "";
+    const scopesList = scopesStr.split(" ").map((s: string) => s.trim()).filter(Boolean);
+    
+    // Check for required scopes
+    const hasCalendar = scopesList.some((s: string) => s.includes('auth/calendar'));
+    const hasGmail = scopesList.some((s: string) => s.includes('auth/gmail') || s.includes('mail.google.com'));
+    const hasTasks = scopesList.some((s: string) => s.includes('auth/tasks'));
+    
+    return {
+      valid: true,
+      scopes: scopesList,
+      hasCalendar,
+      hasGmail,
+      hasTasks
+    };
+  } catch (err) {
+    console.warn("Failed to fetch tokeninfo:", err);
+    return { valid: false, scopes: [], hasCalendar: false, hasGmail: false, hasTasks: false };
+  }
+}
+
 export function handleApiError(status: number, service: string) {
   if (status === 401 || status === 403) {
     localStorage.removeItem('donna_access_token');

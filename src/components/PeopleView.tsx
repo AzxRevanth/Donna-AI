@@ -5,6 +5,7 @@ import { auth } from '../firebase';
 import { getPeople, getUserPreferences } from '../dbService';
 import { mineGmailContacts } from '../services/gmailContactMiner';
 import { analyzePerson } from '../services/peopleIntelligence';
+import { ENV } from '../utils/env';
 
 interface PeopleViewProps {
   people: Person[];
@@ -27,7 +28,7 @@ export default function PeopleView({
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState('');
-  const [isIframe] = useState(() => window !== window.top);
+  const [isIframe] = useState(() => ENV === 'preview');
   const [showIframeBanner, setShowIframeBanner] = useState(() => {
     return isIframe && localStorage.getItem('donna_iframe_banner_dismissed') !== 'true';
   });

@@ -43,6 +43,12 @@ export const getGoogleProvider = () => {
   provider.addScope('https://www.googleapis.com/auth/tasks');
   provider.addScope('https://www.googleapis.com/auth/tasks.readonly');
   provider.addScope('https://mail.google.com/');
+  
+  // Ensure access_type is offline and force consent prompt for fresh fully scoped tokens
+  provider.setCustomParameters({
+    access_type: 'offline',
+    prompt: 'consent'
+  });
   return provider;
 };
 

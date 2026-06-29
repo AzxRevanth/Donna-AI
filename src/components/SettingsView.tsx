@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserContext, DonnaMemoryFact } from '../types';
-import { Check, Clipboard, ShieldCheck, Trash2, UserPlus, Sliders, HardDrive, RefreshCw } from 'lucide-react';
+import { Check, Clipboard, ShieldCheck, Trash2, UserPlus, Sliders, HardDrive, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface SettingsViewProps {
   userContext: UserContext;
@@ -38,6 +38,117 @@ export default function SettingsView({
   // Memo fact adding
   const [newMemoryText, setNewMemoryText] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Scope validation states
+  const [scopeStatus, setScopeStatus] = useState<{
+    loaded: boolean;
+    hasCalendar: boolean;
+    hasGmail: boolean;
+    hasTasks: boolean;
+    hasPeople: boolean;
+    scopes: string[];
+  }>({
+    loaded: false,
+    hasCalendar: false,
+    hasGmail: false,
+    hasTasks: false,
+    hasPeople: false,
+    scopes: []
+  });
+
+  useEffect(() => {
+    const checkScopes = async () => {
+      const token = localStorage.getItem('donna_access_token');
+      if (!token) {
+        setScopeStatus({
+          loaded: true,
+          hasCalendar: false,
+          hasGmail: false,
+          hasTasks: false,
+          hasPeople: false,
+          scopes: []
+        });
+        return;
+      }
+      try {
+        const { verifyTokenScopes } = await import('../googleApi');
+        const verification = await verifyTokenScopes(token);
+        setScopeStatus({
+          loaded: true,
+          hasCalendar: verification.hasCalendar,
+          hasGmail: verification.hasGmail,
+          hasTasks: verification.hasTasks,
+          hasPeople: verification.hasGmail,
+          scopes: verification.scopes
+        });
+      } catch (err) {
+        console.warn("Scope verification failed:", err);
+        setScopeStatus(prev => ({ ...prev, loaded: true }));
+      }
+    };
+    checkScopes();
+  }, []);
+
+  const handleReconnectGoogle = async () => {
+    setIsLinkingGoogle(true);
+    setErrorMsg(null);
+    try {
+      const { signOut, signInWithPopup, GoogleAuthProvider } = await import('firebase/auth');
+      const { getGoogleProvider, auth } = await import('../firebase');
+      
+      const provider = getGoogleProvider();
+      
+      // Clear current Auth session
+      await signOut(auth);
+      
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const accessToken = credential?.accessToken;
+      
+      if (accessToken) {
+        localStorage.setItem('donna_demo_mode', 'false');
+        localStorage.setItem('donna_access_token', accessToken);
+        localStorage.setItem('donna_user_name', result.user.displayName || 'Partner');
+        localStorage.setItem('donna_user_email', result.user.email || '');
+        localStorage.setItem('donna_user_photo', result.user.photoURL || '');
+        localStorage.setItem('donna_user_uid', result.user.uid);
+        
+        // Update scopes state
+        const { verifyTokenScopes } = await import('../googleApi');
+        const verification = await verifyTokenScopes(accessToken);
+        setScopeStatus({
+          loaded: true,
+          hasCalendar: verification.hasCalendar,
+          hasGmail: verification.hasGmail,
+          hasTasks: verification.hasTasks,
+          hasPeople: verification.hasGmail,
+          scopes: verification.scopes
+        });
+        
+        // Automatically enable all connected services
+        onUpdateUserContext({
+          ...userContext,
+          name: result.user.displayName || userContext.name || 'Partner',
+          connectedServices: {
+            gmail: true,
+            calendar: true,
+            tasks: true,
+            people: true
+          }
+        });
+        
+        setErrorMsg(null);
+        window.location.reload(); // Reload to refresh all data feeds instantly!
+      } else {
+        throw new Error("No access token was returned. Make sure to allow all Google permissions on the prompt.");
+      }
+    } catch (err: any) {
+      console.error("Reconnect failed:", err);
+      setErrorMsg(`Reconnection failed: ${err.message || err}`);
+    } finally {
+      setIsLinkingGoogle(false);
+    }
+  };
 
   // Connected services states
   const [isLinkingGoogle, setIsLinkingGoogle] = useState(false);
@@ -498,6 +609,31 @@ export default function SettingsView({
               </div>
             )}
 
+            {/* If there's an active token, check if any scopes are missing. If so, display a warning banner with a Reconnect button! */}
+            {localStorage.getItem('donna_access_token') && scopeStatus.loaded && (!scopeStatus.hasGmail || !scopeStatus.hasCalendar || !scopeStatus.hasTasks) && (
+              <div className="bg-amber-950/20 border border-amber-500/10 p-4 rounded-xl space-y-3">
+                <div className="flex items-start space-x-2.5">
+                  <AlertTriangle className="h-4 w-4 text-[#c9a84c] shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h5 className="text-[#f0ebe0] text-[12px] font-medium leading-tight">Incomplete Google Permissions</h5>
+                    <p className="text-[11px] text-neutral-400 font-light leading-relaxed">
+                      Google OAuth token is missing some required workspace scopes. To allow Donna to function at full capabilities, authorize all requested permissions.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleReconnectGoogle}
+                    disabled={isLinkingGoogle}
+                    className="h-7 px-3.5 bg-[#c9a84c] hover:bg-[#ebd083] text-[#0c0c0c] text-[11px] font-sans font-medium rounded-full transition-all duration-150 flex items-center space-x-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isLinkingGoogle ? 'animate-spin' : ''}`} />
+                    <span>Reconnect Google Workspace</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-3">
               {[
                 { key: 'gmail', name: 'Google Gmail Sync', desc: 'Allows Donna to read and draft emails.' },
@@ -509,15 +645,26 @@ export default function SettingsView({
                   ? !!userContext.connectedServices[service.key as 'gmail' | 'calendar' | 'tasks' | 'people']
                   : !!localStorage.getItem('donna_access_token');
 
+                let verifiedScope = false;
+                if (service.key === 'gmail') verifiedScope = scopeStatus.hasGmail;
+                else if (service.key === 'calendar') verifiedScope = scopeStatus.hasCalendar;
+                else if (service.key === 'tasks') verifiedScope = scopeStatus.hasTasks;
+                else if (service.key === 'people') verifiedScope = scopeStatus.hasPeople;
+
                 return (
                   <div key={service.key} className="flex flex-col sm:flex-row justify-between sm:items-center bg-black/20 border border-white/[0.04] p-4 rounded-xl gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center space-x-2">
                         <span className="text-[#f0ebe0] text-[13px] font-medium">{service.name}</span>
                         {isServiceConnected ? (
-                          <span className="h-1.5 w-1.5 rounded-full bg-[#43a047] shadow-[0_0_4px_#43a047]" />
+                          <div className="flex items-center space-x-1.5 text-[10px]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[#43a047] shadow-[0_0_4px_#43a047]" />
+                            <span className={verifiedScope ? "text-[#43a047] font-light" : "text-amber-500 font-light animate-pulse"}>
+                              {verifiedScope ? 'Authorized & Verified' : 'Missing Permissions'}
+                            </span>
+                          </div>
                         ) : (
-                          <span className="h-1.5 w-1.5 rounded-full bg-[#4a4540]" />
+                          <span className="text-[10px] text-neutral-600 font-light">Inactive</span>
                         )}
                       </div>
                       <p className="text-[11px] text-neutral-500 font-light leading-relaxed">{service.desc}</p>

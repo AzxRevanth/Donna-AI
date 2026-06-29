@@ -24,8 +24,9 @@ import { Task, CalendarEvent, Person, Goal, Habit, AppEmail, UserContext, DonnaM
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { fetchCalendarEvents, fetchTasks, fetchEmails, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from './googleApi';
-import { getPeople, getGoals, getUserPreferences, saveGoal, savePerson, saveUserPreferences, getCalendarEvents, saveCalendarEvent, deleteCalendarEvent as dbDeleteCalendarEvent, getTasks, saveTask, deleteTask as dbDeleteTask, getHabits, saveHabit, deleteHabit as dbDeleteHabit, deletePerson, deleteGoal } from './dbService';
+import { getPeople, getGoals, getUserPreferences, saveGoal, savePerson, saveUserPreferences, deletePerson, deleteGoal } from './dbService';
 import { mineGmailContacts } from './services/gmailContactMiner';
+import { ENV } from './utils/env';
 
 // Importing Views
 import LoginView from './components/LoginView';
@@ -85,7 +86,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const [showEnvBanner, setShowEnvBanner] = useState(() => {
-    return window !== window.top && sessionStorage.getItem('donna_env_banner_dismissed') !== 'true';
+    return ENV === 'preview' && sessionStorage.getItem('donna_env_banner_dismissed') !== 'true';
   });
 
   useEffect(() => {
@@ -104,7 +105,10 @@ export default function App() {
   };
 
   // Sync state writes to Local Storage immediately!
-  useEffect(() => { saveStoredData('current_view', currentView); }, [currentView]);
+  useEffect(() => { 
+    saveStoredData('current_view', currentView); 
+    voiceService.stopSpeaking();
+  }, [currentView]);
   useEffect(() => { saveStoredData('sidebar_collapsed', sidebarCollapsed); }, [sidebarCollapsed]);
   useEffect(() => { saveStoredData('user_context', userContext); }, [userContext]);
   useEffect(() => { saveStoredData('tasks', tasks); }, [tasks]);
@@ -225,19 +229,19 @@ export default function App() {
           }
           setEvents(mappedEvents);
         } else {
-          const fsEvents = await getCalendarEvents(uid);
-          if (fsEvents && fsEvents.length > 0) {
-            setEvents(fsEvents);
+          const localEvents = loadStoredData('events', INITIAL_EVENTS);
+          if (localEvents && localEvents.length > 0) {
+            setEvents(localEvents);
           }
         }
       } catch (error: any) {
-        console.warn("Failed to fetch Google Calendar, falling back to Firestore local calendar:", error);
-        const fsEvents = await getCalendarEvents(uid);
-        setEvents(fsEvents);
+        console.warn("Failed to fetch Google Calendar, falling back to local calendar:", error);
+        const localEvents = loadStoredData('events', INITIAL_EVENTS);
+        setEvents(localEvents);
       }
     } else {
-      const fsEvents = await getCalendarEvents(uid);
-      setEvents(fsEvents);
+      const localEvents = loadStoredData('events', INITIAL_EVENTS);
+      setEvents(localEvents);
     }
 
     // 2. Fetch Tasks
@@ -264,19 +268,19 @@ export default function App() {
           });
           setTasks(mappedTasks);
         } else {
-          const fsTasks = await getTasks(uid);
-          if (fsTasks && fsTasks.length > 0) {
-            setTasks(fsTasks);
+          const localTasks = loadStoredData('tasks', INITIAL_TASKS);
+          if (localTasks && localTasks.length > 0) {
+            setTasks(localTasks);
           }
         }
       } catch (error: any) {
-        console.warn("Failed to fetch Google Tasks, falling back to Firestore local tasks:", error);
-        const fsTasks = await getTasks(uid);
-        setTasks(fsTasks);
+        console.warn("Failed to fetch Google Tasks, falling back to local tasks:", error);
+        const localTasks = loadStoredData('tasks', INITIAL_TASKS);
+        setTasks(localTasks);
       }
     } else {
-      const fsTasks = await getTasks(uid);
-      setTasks(fsTasks);
+      const localTasks = loadStoredData('tasks', INITIAL_TASKS);
+      setTasks(localTasks);
     }
 
     // 3. Fetch Emails
@@ -468,39 +472,6 @@ export default function App() {
           }
           setPeople(INITIAL_PEOPLE);
         }
-
-        // Fetch events
-        const fsEvents = await getCalendarEvents(uid);
-        if (fsEvents && fsEvents.length > 0) {
-          setEvents(fsEvents);
-        } else {
-          for (const e of INITIAL_EVENTS) {
-            await saveCalendarEvent(uid, e);
-          }
-          setEvents(INITIAL_EVENTS);
-        }
-
-        // Fetch tasks
-        const fsTasks = await getTasks(uid);
-        if (fsTasks && fsTasks.length > 0) {
-          setTasks(fsTasks);
-        } else {
-          for (const t of INITIAL_TASKS) {
-            await saveTask(uid, t);
-          }
-          setTasks(INITIAL_TASKS);
-        }
-
-        // Fetch habits
-        const fsHabits = await getHabits(uid);
-        if (fsHabits && fsHabits.length > 0) {
-          setHabits(fsHabits);
-        } else {
-          for (const h of INITIAL_HABITS) {
-            await saveHabit(uid, h);
-          }
-          setHabits(INITIAL_HABITS);
-        }
       } catch (err) {
         console.error("Error loading Firestore data:", err);
       }
@@ -587,36 +558,6 @@ export default function App() {
     const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
     if (isDemo) return;
 
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-
-    // Diff local state change against previous state
-    const added = newTasks.filter(nt => !tasks.some(ot => ot.id === nt.id));
-    const deleted = tasks.filter(ot => !newTasks.some(nt => nt.id === ot.id));
-    const modified = newTasks.filter(nt => {
-      const matched = tasks.find(ot => ot.id === nt.id);
-      if (!matched) return false;
-      return matched.title !== nt.title ||
-             matched.dueDate !== nt.dueDate ||
-             matched.completed !== nt.completed ||
-             matched.priority !== nt.priority ||
-             matched.notes !== nt.notes ||
-             matched.timeEstimate !== nt.timeEstimate ||
-             matched.donnaNote !== nt.donnaNote ||
-             JSON.stringify(matched.subtasks) !== JSON.stringify(nt.subtasks) ||
-             matched.reminderTime !== nt.reminderTime;
-    });
-
-    for (const task of added) {
-      await saveTask(uid, task);
-    }
-    for (const task of modified) {
-      await saveTask(uid, task);
-    }
-    for (const task of deleted) {
-      await dbDeleteTask(uid, task.id);
-    }
-
     // Google Sync if connected
     const token = localStorage.getItem('donna_access_token');
     const isTasksConnected = userContext.connectedServices 
@@ -674,31 +615,6 @@ export default function App() {
 
   const handleUpdateHabits = async (newHabits: Habit[]) => {
     setHabits(newHabits);
-
-    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
-    if (isDemo) return;
-
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-
-    const added = newHabits.filter(nh => !habits.some(oh => oh.id === nh.id));
-    const deleted = habits.filter(oh => !newHabits.some(nh => nh.id === oh.id));
-    const modified = newHabits.filter(nh => {
-      const matched = habits.find(oh => oh.id === nh.id);
-      if (!matched) return false;
-      return matched.title !== nh.title ||
-             JSON.stringify(matched.history) !== JSON.stringify(nh.history);
-    });
-
-    for (const habit of added) {
-      await saveHabit(uid, habit);
-    }
-    for (const habit of modified) {
-      await saveHabit(uid, habit);
-    }
-    for (const habit of deleted) {
-      await dbDeleteHabit(uid, habit.id);
-    }
   };
 
   const handleUpdateUserContext = async (newContext: UserContext) => {
