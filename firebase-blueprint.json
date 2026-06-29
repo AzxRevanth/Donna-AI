@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "Person": {
+      "title": "Person",
+      "description": "A contact or attendee tracked in People Intel",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "company": { "type": "string" },
+        "relationship": { "type": "string", "enum": ["Client", "Colleague", "Manager", "Personal", "Vendor"] },
+        "lastInteraction": { "type": "string" },
+        "notes": { "type": "string" },
+        "thingsToRemember": { "type": "array" },
+        "source": { "type": "string" },
+        "firstSeen": { "type": "string" }
+      },
+      "required": ["name", "email"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "A strategic target or habit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["Work", "Health", "Learning", "Personal"] },
+        "weeklyTarget": { "type": "string" },
+        "currentStreak": { "type": "number" },
+        "weeklyCompletion": { "type": "number" },
+        "targetNum": { "type": "number" },
+        "completions": { "type": "array" }
+      },
+      "required": ["title", "category", "targetNum"]
+    },
+    "Preferences": {
+      "title": "Preferences",
+      "description": "User specific executive configuration preferences",
+      "type": "object",
+      "properties": {
+        "workStartHour": { "type": "string" },
+        "workEndHour": { "type": "string" },
+        "focusHours": { "type": "array" },
+        "donnaAssertiveness": { "type": "string", "enum": ["gentle", "balanced", "direct"] }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{uid}/people/{personId}": {
+      "schema": "Person",
+      "description": "List of people intelligence records for the user"
+    },
+    "/users/{uid}/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "User goals and performance trackers"
+    },
+    "/users/{uid}/preferences/{prefId}": {
+      "schema": "Preferences",
+      "description": "User settings preferences"
+    }
+  }
+}
