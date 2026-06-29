@@ -1,10 +1,6 @@
 export class FunctionExecutor {
   async execute(name: string, args: any, accessToken: string): Promise<any> {
-    if (!accessToken) {
-      throw new Error("No Google access token found. Please sign in again with Google.");
-    }
-
-    const isDemo = localStorage.getItem('donna_demo_mode') === 'true' || accessToken === 'demo-token';
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true' || accessToken === 'demo-token' || !accessToken;
     if (isDemo) {
       return this.executeDemo(name, args);
     }

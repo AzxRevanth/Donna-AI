@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, Lock, Zap, Check, ArrowRight } from 'lucide-react';
-import { auth } from '../firebase';
+import { auth, getGoogleProvider } from '../firebase';
+import { linkWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { askGemini } from '../gemini';
 import { saveUserPreferences } from '../dbService';
 import DonnaBlob from './voice/DonnaBlob';
@@ -14,6 +15,44 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
 
   // Screen 1: Disclaimer states
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [isEmailUserWithoutGoogle, setIsEmailUserWithoutGoogle] = useState(false);
+  const [isLinking, setIsLinking] = useState(false);
+  const [linkingError, setLinkingError] = useState<string | null>(null);
+
+  const handleConnectGoogle = async () => {
+    setIsLinking(true);
+    setLinkingError(null);
+    try {
+      const provider = getGoogleProvider();
+      if (!auth.currentUser) {
+        throw new Error("No active credentials found to connect Google. Please try logging in again.");
+      }
+      const result = await linkWithPopup(auth.currentUser, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const accessToken = credential?.accessToken;
+      if (accessToken) {
+        localStorage.setItem('donna_demo_mode', 'false');
+        localStorage.setItem('donna_access_token', accessToken);
+        localStorage.setItem('donna_user_email', result.user.email || '');
+        if (result.user.displayName) {
+          localStorage.setItem('donna_user_name', result.user.displayName);
+          setPreferredName(result.user.displayName.split(' ')[0]);
+        }
+        setIsEmailUserWithoutGoogle(false); // Link successful! Upgrade to standard onboarding experience.
+      } else {
+        throw new Error("No Google access token was returned. Ensure permissions are allowed.");
+      }
+    } catch (err: any) {
+      console.error("Failed to link Google account during onboarding:", err);
+      let errMsg = err.message || String(err);
+      if (err.code === 'auth/credential-already-in-use') {
+        errMsg = "This Google account is already linked to another user's secure ledger. Please use a different Google account or log in with Google.";
+      }
+      setLinkingError(errMsg);
+    } finally {
+      setIsLinking(false);
+    }
+  };
 
   // Screen 2: Form fields
   const [preferredName, setPreferredName] = useState('');
@@ -60,6 +99,14 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       if (storedName) {
         setPreferredName(storedName.split(' ')[0]);
       }
+    }
+
+    // Detect if signed in using Email & Password (without connecting Google)
+    const hasGoogleProvider = auth.currentUser?.providerData.some(p => p.providerId === 'google.com');
+    const hasAccessToken = !!localStorage.getItem('donna_access_token');
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (auth.currentUser && !hasGoogleProvider && !hasAccessToken && !isDemo) {
+      setIsEmailUserWithoutGoogle(true);
     }
   }, []);
 
@@ -230,7 +277,69 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       <div className="w-full flex-grow flex items-center justify-center z-10 px-4 py-12 md:px-8 max-w-4xl">
         
         {/* SCREEN 1: DISCLAIMER */}
-        {screen === 1 && (
+        {screen === 1 && isEmailUserWithoutGoogle ? (
+          <div className="w-full space-y-8 max-w-2xl text-center animate-fade-in select-none">
+            <div className="space-y-3">
+              <div className="w-16 h-16 rounded-full border border-[#c9a84c]/30 flex items-center justify-center mx-auto mb-6 bg-[#161616] shadow-2xl relative">
+                <span className="font-serif text-3xl font-bold tracking-normal text-[#c9a84c] pl-0.5">D</span>
+              </div>
+              <h2 className="font-serif text-3xl md:text-4xl text-[#f0ebe0] font-normal tracking-tight">
+                Limited Experience Without Google
+              </h2>
+              <p className="text-xs font-sans font-light text-[#8a8070] max-w-md mx-auto italic">
+                Donna works without Google, but several intelligent features depend on Google integrations.
+              </p>
+            </div>
+
+            <div className="p-6 md:p-8 rounded-2xl bg-[rgba(22,22,22,0.85)] backdrop-blur-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.4),0_8px_24px_rgba(0,0,0,0.3)] border border-[#c9a84c]/10 text-left max-w-xl mx-auto space-y-4">
+              <p className="text-xs text-[#8a8070] font-light leading-relaxed">
+                Without connecting a Google account:
+              </p>
+              <ul className="space-y-2 text-xs font-sans font-light text-[#ebd083]/90 list-disc list-inside">
+                <li>Donna cannot read or send Gmail.</li>
+                <li>Donna cannot read or manage Google Calendar.</li>
+                <li>Donna cannot sync Google Tasks.</li>
+                <li>People Intelligence will be unavailable because Donna cannot analyze email history.</li>
+                <li>Morning Briefs will only use locally available data.</li>
+                <li>Automatic scheduling, email drafting, follow-up detection and proactive planning will be limited.</li>
+              </ul>
+            </div>
+
+            {linkingError && (
+              <div className="text-xs text-red-400/90 font-sans max-w-md mx-auto p-3 bg-red-950/25 border border-red-500/15 rounded-xl">
+                {linkingError}
+              </div>
+            )}
+
+            <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-4">
+              <button
+                onClick={handleConnectGoogle}
+                disabled={isLinking}
+                className="h-11 px-8 bg-[#c9a84c] hover:bg-[#ebd083] text-[#0c0c0c] font-sans font-semibold text-xs rounded-full flex items-center justify-center space-x-2 transition-all duration-200 active:scale-[0.97] cursor-pointer shadow-lg disabled:opacity-50"
+              >
+                {isLinking ? (
+                  <span>Connecting to Google...</span>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                      <path d="M12.24 10.285V13.4h6.887C18.2 15.614 15.645 18 12.24 18c-3.865 0-7-3.135-7-7s3.135-7 7-7c1.84 0 3.515.715 4.775 1.885l2.45-2.45C17.155 1.485 14.86 1 12.24 1 6.725 1 2.24 5.485 2.24 11s4.485 10 10 10c5.755 0 9.76-4.045 9.76-9.925 0-.595-.065-1.185-.18-1.79H12.24z"/>
+                    </svg>
+                    <span>Connect Google Account</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsEmailUserWithoutGoogle(false); // Proceed to normal disclaimer
+                }}
+                className="h-11 px-8 bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.08] text-[#8a8070] hover:text-[#f0ebe0] font-sans font-medium text-xs rounded-full flex items-center justify-center transition-all duration-200 active:scale-[0.97] cursor-pointer"
+              >
+                <span>Continue Without Google</span>
+              </button>
+            </div>
+          </div>
+        ) : screen === 1 && (
           <div className="w-full space-y-8 max-w-3xl text-center animate-fade-in select-none">
             <div className="space-y-3">
               <div className="w-16 h-16 rounded-full border border-[#c9a84c]/30 flex items-center justify-center mx-auto mb-6 bg-[#161616] shadow-2xl relative">

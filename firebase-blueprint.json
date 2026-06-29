@@ -30,10 +30,57 @@
         "weeklyTarget": { "type": "string" },
         "currentStreak": { "type": "number" },
         "weeklyCompletion": { "type": "number" },
-        "targetNum": { "type": "number" },
-        "completions": { "type": "array" }
+        "targetNum": { "type": "number" }
       },
       "required": ["title", "category", "targetNum"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "An action item tracked by Donna",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "priority": { "type": "string", "enum": ["URGENT", "HIGH", "NORMAL"] },
+        "notes": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "timeEstimate": { "type": "string" },
+        "donnaNote": { "type": "string" },
+        "subtasks": { "type": "array" },
+        "reminderTime": { "type": "string" }
+      },
+      "required": ["title", "dueDate", "priority", "completed"]
+    },
+    "CalendarEvent": {
+      "title": "CalendarEvent",
+      "description": "A calendar meeting or time-blocked event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "duration": { "type": "number" },
+        "attendees": { "type": "array" },
+        "description": { "type": "string" },
+        "location": { "type": "string" },
+        "reminderMinutes": { "type": "number" },
+        "recurrence": { "type": "string", "enum": ["NONE", "DAILY", "WEEKLY"] },
+        "hasConflict": { "type": "boolean" }
+      },
+      "required": ["title", "date", "startTime", "duration"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "A habit tracked daily",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "history": { "type": "object" }
+      },
+      "required": ["title", "history"]
     },
     "Preferences": {
       "title": "Preferences",
@@ -59,6 +106,18 @@
     "/users/{uid}/preferences/{prefId}": {
       "schema": "Preferences",
       "description": "User settings preferences"
+    },
+    "/users/{uid}/events/{eventId}": {
+      "schema": "CalendarEvent",
+      "description": "User calendar events and schedule blocks"
+    },
+    "/users/{uid}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "User tasks and to-do actions"
+    },
+    "/users/{uid}/habits/{habitId}": {
+      "schema": "Habit",
+      "description": "User daily tracked habits"
     }
   }
 }

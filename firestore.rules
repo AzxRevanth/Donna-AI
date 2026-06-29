@@ -30,6 +30,18 @@ service cloud.firestore {
       match /preferences/{prefId} {
         allow read, write: if isOwner(uid);
       }
+
+      match /events/{eventId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /tasks/{taskId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /habits/{habitId} {
+        allow read, write: if isOwner(uid);
+      }
     }
   }
 }

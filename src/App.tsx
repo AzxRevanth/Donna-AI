@@ -24,7 +24,7 @@ import { Task, CalendarEvent, Person, Goal, Habit, AppEmail, UserContext, DonnaM
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { fetchCalendarEvents, fetchTasks, fetchEmails, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from './googleApi';
-import { getPeople, getGoals, getUserPreferences, saveGoal, savePerson, saveUserPreferences } from './dbService';
+import { getPeople, getGoals, getUserPreferences, saveGoal, savePerson, saveUserPreferences, getCalendarEvents, saveCalendarEvent, deleteCalendarEvent as dbDeleteCalendarEvent, getTasks, saveTask, deleteTask as dbDeleteTask, getHabits, saveHabit, deleteHabit as dbDeleteHabit, deletePerson, deleteGoal } from './dbService';
 import { mineGmailContacts } from './services/gmailContactMiner';
 
 // Importing Views
@@ -150,154 +150,175 @@ export default function App() {
     if (!auth.currentUser || localStorage.getItem('donna_demo_mode') === 'true') return;
     setIsSyncing(true);
     
-    // 1. Fetch Calendar
-    const todayStr = new Date();
-    todayStr.setHours(0, 0, 0, 0);
-    const nextWeekStr = new Date();
-    nextWeekStr.setDate(nextWeekStr.getDate() + 7);
-    nextWeekStr.setHours(23, 59, 59, 999);
-    
-    try {
-      const googleEvents = await fetchCalendarEvents(todayStr.toISOString(), nextWeekStr.toISOString());
-      if (googleEvents && googleEvents.length > 0) {
-        const mappedEvents: CalendarEvent[] = googleEvents.map((item: any) => {
-          const start = item.start?.dateTime || item.start?.date || '';
-          const end = item.end?.dateTime || item.end?.date || '';
-          const startDate = start ? new Date(start) : new Date();
-          const endDate = end ? new Date(end) : new Date();
-          const duration = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
-          const startTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-          
-          return {
-            id: item.id,
-            title: item.summary || '(No Title)',
-            date: start.split('T')[0] || new Date().toISOString().split('T')[0],
-            startTime: startTime,
-            duration: duration || 30,
-            attendees: item.attendees?.map((a: any) => a.displayName || a.email || '') || [],
-            description: item.description || '',
-            hasConflict: false
-          };
-        });
+    const uid = auth.currentUser.uid;
+    const token = localStorage.getItem('donna_access_token');
 
-        // Compute conflicts
-        for (let i = 0; i < mappedEvents.length; i++) {
-          const evA = mappedEvents[i];
-          const startA = new Date(`${evA.date}T${evA.startTime}`);
-          const endA = new Date(startA.getTime() + evA.duration * 60000);
-          
-          for (let j = 0; j < mappedEvents.length; j++) {
-            if (i === j) continue;
-            const evB = mappedEvents[j];
-            if (evA.date !== evB.date) continue;
+    const isGmailConnected = userContext.connectedServices 
+      ? !!userContext.connectedServices.gmail 
+      : !!token;
+
+    const isCalendarConnected = userContext.connectedServices 
+      ? !!userContext.connectedServices.calendar 
+      : !!token;
+
+    const isTasksConnected = userContext.connectedServices 
+      ? !!userContext.connectedServices.tasks 
+      : !!token;
+
+    const isPeopleConnected = userContext.connectedServices 
+      ? !!userContext.connectedServices.people 
+      : !!token;
+
+    // 1. Fetch Calendar
+    if (isCalendarConnected && token) {
+      const todayStr = new Date();
+      todayStr.setHours(0, 0, 0, 0);
+      const nextWeekStr = new Date();
+      nextWeekStr.setDate(nextWeekStr.getDate() + 7);
+      nextWeekStr.setHours(23, 59, 59, 999);
+      
+      try {
+        const googleEvents = await fetchCalendarEvents(todayStr.toISOString(), nextWeekStr.toISOString());
+        if (googleEvents && googleEvents.length > 0) {
+          const mappedEvents: CalendarEvent[] = googleEvents.map((item: any) => {
+            const start = item.start?.dateTime || item.start?.date || '';
+            const end = item.end?.dateTime || item.end?.date || '';
+            const startDate = start ? new Date(start) : new Date();
+            const endDate = end ? new Date(end) : new Date();
+            const duration = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
+            const startTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
             
-            const startB = new Date(`${evB.date}T${evB.startTime}`);
-            const endB = new Date(startB.getTime() + evB.duration * 60000);
+            return {
+              id: item.id,
+              title: item.summary || '(No Title)',
+              date: start.split('T')[0] || new Date().toISOString().split('T')[0],
+              startTime: startTime,
+              duration: duration || 30,
+              attendees: item.attendees?.map((a: any) => a.displayName || a.email || '') || [],
+              description: item.description || '',
+              location: item.location || '',
+              reminderMinutes: 15,
+              recurrence: 'NONE',
+              hasConflict: false
+            };
+          });
+
+          // Compute conflicts
+          for (let i = 0; i < mappedEvents.length; i++) {
+            const evA = mappedEvents[i];
+            const startA = new Date(`${evA.date}T${evA.startTime}`);
+            const endA = new Date(startA.getTime() + evA.duration * 60000);
             
-            if (startA < endB && endA > startB) {
-              evA.hasConflict = true;
-              break;
+            for (let j = 0; j < mappedEvents.length; j++) {
+              if (i === j) continue;
+              const evB = mappedEvents[j];
+              if (evA.date !== evB.date) continue;
+              
+              const startB = new Date(`${evB.date}T${evB.startTime}`);
+              const endB = new Date(startB.getTime() + evB.duration * 60000);
+              
+              if (startA < endB && endA > startB) {
+                evA.hasConflict = true;
+                break;
+              }
             }
           }
+          setEvents(mappedEvents);
+        } else {
+          const fsEvents = await getCalendarEvents(uid);
+          if (fsEvents && fsEvents.length > 0) {
+            setEvents(fsEvents);
+          }
         }
-        setEvents(mappedEvents);
+      } catch (error: any) {
+        console.warn("Failed to fetch Google Calendar, falling back to Firestore local calendar:", error);
+        const fsEvents = await getCalendarEvents(uid);
+        setEvents(fsEvents);
       }
-    } catch (error: any) {
-      const errMsg = error.message || String(error);
-      if (errMsg === 'reconnect_needed') {
-        setReconnectNeeded(true);
-      } else if (errMsg.includes('NetworkError') || 
-          errMsg.includes('Failed to fetch') || 
-          errMsg.includes('CORS') ||
-          errMsg.toLowerCase().includes('network error')) {
-        console.warn('Calendar fetch blocked in preview — will work when deployed or run locally');
-        setIsGmailBlocked(true);
-      } else {
-        console.warn("Failed to fetch Calendar events:", error);
-      }
+    } else {
+      const fsEvents = await getCalendarEvents(uid);
+      setEvents(fsEvents);
     }
 
     // 2. Fetch Tasks
-    try {
-      const googleTasks = await fetchTasks();
-      if (googleTasks && googleTasks.length > 0) {
-        const storedTasksMetadata = JSON.parse(localStorage.getItem('donna_tasks_metadata') || '{}');
-        const mappedTasks: Task[] = googleTasks.map((item: any) => {
-          const id = item.id;
-          const meta = storedTasksMetadata[id] || {};
-          return {
-            id,
-            title: item.title || '(Untitled Task)',
-            dueDate: item.due ? item.due.split('T')[0] : new Date().toISOString().split('T')[0],
-            completed: item.status === 'completed',
-            priority: meta.priority || 'NORMAL',
-            notes: item.notes || '',
-            timeEstimate: meta.timeEstimate || '1.0h',
-            donnaNote: meta.donnaNote || 'Pending Donna\'s priority calibration.'
-          };
-        });
-        setTasks(mappedTasks);
+    if (isTasksConnected && token) {
+      try {
+        const googleTasks = await fetchTasks();
+        if (googleTasks && googleTasks.length > 0) {
+          const storedTasksMetadata = JSON.parse(localStorage.getItem('donna_tasks_metadata') || '{}');
+          const mappedTasks: Task[] = googleTasks.map((item: any) => {
+            const id = item.id;
+            const meta = storedTasksMetadata[id] || {};
+            return {
+              id,
+              title: item.title || '(Untitled Task)',
+              dueDate: item.due ? item.due.split('T')[0] : new Date().toISOString().split('T')[0],
+              completed: item.status === 'completed',
+              priority: meta.priority || 'NORMAL',
+              notes: item.notes || '',
+              timeEstimate: meta.timeEstimate || '1.0h',
+              donnaNote: meta.donnaNote || 'Pending Donna\'s priority calibration.',
+              subtasks: meta.subtasks || [],
+              reminderTime: meta.reminderTime || ''
+            };
+          });
+          setTasks(mappedTasks);
+        } else {
+          const fsTasks = await getTasks(uid);
+          if (fsTasks && fsTasks.length > 0) {
+            setTasks(fsTasks);
+          }
+        }
+      } catch (error: any) {
+        console.warn("Failed to fetch Google Tasks, falling back to Firestore local tasks:", error);
+        const fsTasks = await getTasks(uid);
+        setTasks(fsTasks);
       }
-    } catch (error: any) {
-      const errMsg = error.message || String(error);
-      if (errMsg === 'reconnect_needed') {
-        setReconnectNeeded(true);
-      } else if (errMsg.includes('NetworkError') || 
-          errMsg.includes('Failed to fetch') || 
-          errMsg.includes('CORS') ||
-          errMsg.toLowerCase().includes('network error')) {
-        console.warn('Tasks fetch blocked in preview — will work when deployed or run locally');
-        setIsGmailBlocked(true);
-      } else {
-        console.warn("Failed to fetch Google tasks:", error);
-      }
+    } else {
+      const fsTasks = await getTasks(uid);
+      setTasks(fsTasks);
     }
 
     // 3. Fetch Emails
-    try {
-      const googleEmails = await fetchEmails('in:inbox', 15);
-      if (googleEmails && googleEmails.length > 0) {
-        const storedEmailsMetadata = JSON.parse(localStorage.getItem('donna_emails_metadata') || '{}');
-        const mappedEmails: AppEmail[] = googleEmails.map((item: any) => {
-          const id = item.id;
-          const meta = storedEmailsMetadata[id] || {};
-          return {
-            id,
-            sender: item.sender || 'Unknown',
-            senderEmail: item.senderEmail || '',
-            subject: item.subject || '(No Subject)',
-            time: item.time || '',
-            preview: item.preview || '',
-            body: item.body || '',
-            isPriority: item.isPriority || false,
-            donnaLabel: meta.donnaLabel || 'Inbox'
-          };
-        });
-        setEmails(mappedEmails);
-      }
-    } catch (error: any) {
-      const errMsg = error.message || String(error);
-      if (errMsg === 'reconnect_needed') {
-        setReconnectNeeded(true);
-      } else if (errMsg.includes('NetworkError') || 
-          errMsg.includes('Failed to fetch') || 
-          errMsg.includes('CORS') ||
-          errMsg.toLowerCase().includes('network error')) {
-        console.warn('Gmail fetch blocked in preview — will work when deployed or run locally');
-        setIsGmailBlocked(true);
-      } else {
+    if (isGmailConnected && token) {
+      try {
+        const googleEmails = await fetchEmails('in:inbox', 15);
+        if (googleEmails && googleEmails.length > 0) {
+          const storedEmailsMetadata = JSON.parse(localStorage.getItem('donna_emails_metadata') || '{}');
+          const mappedEmails: AppEmail[] = googleEmails.map((item: any) => {
+            const id = item.id;
+            const meta = storedEmailsMetadata[id] || {};
+            return {
+              id,
+              sender: item.sender || 'Unknown',
+              senderEmail: item.senderEmail || '',
+              subject: item.subject || '(No Subject)',
+              time: item.time || '',
+              preview: item.preview || '',
+              body: item.body || '',
+              isPriority: item.isPriority || false,
+              donnaLabel: meta.donnaLabel || 'Inbox'
+            };
+          });
+          setEmails(mappedEmails);
+        }
+      } catch (error: any) {
         console.warn("Failed to fetch Gmail inbox:", error);
       }
+    } else {
+      setEmails([]);
     }
 
     // 4. Extract and sync contacts from Gmail
-    const token = localStorage.getItem('donna_access_token');
-    if (token && !isGmailBlocked) {
+    if (isPeopleConnected && token && !isGmailBlocked) {
       try {
         await syncPeopleFromGmail(token);
       } catch (err) {
         console.error("Failed background Gmail contacts sync:", err);
       }
+    } else {
+      const fsPeople = await getPeople(uid);
+      setPeople(fsPeople);
     }
 
     setIsSyncing(false);
@@ -447,6 +468,39 @@ export default function App() {
           }
           setPeople(INITIAL_PEOPLE);
         }
+
+        // Fetch events
+        const fsEvents = await getCalendarEvents(uid);
+        if (fsEvents && fsEvents.length > 0) {
+          setEvents(fsEvents);
+        } else {
+          for (const e of INITIAL_EVENTS) {
+            await saveCalendarEvent(uid, e);
+          }
+          setEvents(INITIAL_EVENTS);
+        }
+
+        // Fetch tasks
+        const fsTasks = await getTasks(uid);
+        if (fsTasks && fsTasks.length > 0) {
+          setTasks(fsTasks);
+        } else {
+          for (const t of INITIAL_TASKS) {
+            await saveTask(uid, t);
+          }
+          setTasks(INITIAL_TASKS);
+        }
+
+        // Fetch habits
+        const fsHabits = await getHabits(uid);
+        if (fsHabits && fsHabits.length > 0) {
+          setHabits(fsHabits);
+        } else {
+          for (const h of INITIAL_HABITS) {
+            await saveHabit(uid, h);
+          }
+          setHabits(INITIAL_HABITS);
+        }
       } catch (err) {
         console.error("Error loading Firestore data:", err);
       }
@@ -514,9 +568,184 @@ export default function App() {
   }, [isAuthenticated]);
 
   const handleOnboardingComplete = (data: any) => {
-    setUserContext(prev => ({ ...prev, ...data }));
+    const updated = { ...userContext, ...data };
+    setUserContext(updated);
     setIsOnboarding(false);
     setCurrentView('war-room');
+    
+    // Save preferences to Firestore on onboarding complete
+    const uid = auth.currentUser?.uid;
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (uid && !isDemo) {
+      saveUserPreferences(uid, updated);
+    }
+  };
+
+  const handleUpdateTasks = async (newTasks: Task[]) => {
+    setTasks(newTasks);
+
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (isDemo) return;
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    // Diff local state change against previous state
+    const added = newTasks.filter(nt => !tasks.some(ot => ot.id === nt.id));
+    const deleted = tasks.filter(ot => !newTasks.some(nt => nt.id === ot.id));
+    const modified = newTasks.filter(nt => {
+      const matched = tasks.find(ot => ot.id === nt.id);
+      if (!matched) return false;
+      return matched.title !== nt.title ||
+             matched.dueDate !== nt.dueDate ||
+             matched.completed !== nt.completed ||
+             matched.priority !== nt.priority ||
+             matched.notes !== nt.notes ||
+             matched.timeEstimate !== nt.timeEstimate ||
+             matched.donnaNote !== nt.donnaNote ||
+             JSON.stringify(matched.subtasks) !== JSON.stringify(nt.subtasks) ||
+             matched.reminderTime !== nt.reminderTime;
+    });
+
+    for (const task of added) {
+      await saveTask(uid, task);
+    }
+    for (const task of modified) {
+      await saveTask(uid, task);
+    }
+    for (const task of deleted) {
+      await dbDeleteTask(uid, task.id);
+    }
+
+    // Google Sync if connected
+    const token = localStorage.getItem('donna_access_token');
+    const isTasksConnected = userContext.connectedServices 
+      ? !!userContext.connectedServices.tasks 
+      : !!token;
+
+    if (isTasksConnected && token) {
+      // Save metadata to make sure priority & Donna reasoning is persisted for Google tasks
+      const metadata: any = {};
+      newTasks.forEach(t => {
+        metadata[t.id] = {
+          priority: t.priority,
+          timeEstimate: t.timeEstimate,
+          donnaNote: t.donnaNote,
+          subtasks: t.subtasks,
+          reminderTime: t.reminderTime
+        };
+      });
+      localStorage.setItem('donna_tasks_metadata', JSON.stringify(metadata));
+    }
+  };
+
+  const handleUpdateGoals = async (newGoals: Goal[]) => {
+    setGoals(newGoals);
+    
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (isDemo) return;
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const added = newGoals.filter(ng => !goals.some(og => og.id === ng.id));
+    const deleted = goals.filter(og => !newGoals.some(ng => ng.id === og.id));
+    const modified = newGoals.filter(ng => {
+      const matched = goals.find(og => og.id === ng.id);
+      if (!matched) return false;
+      return matched.title !== ng.title ||
+             matched.category !== ng.category ||
+             matched.weeklyTarget !== ng.weeklyTarget ||
+             matched.currentStreak !== ng.currentStreak ||
+             matched.weeklyCompletion !== ng.weeklyCompletion ||
+             matched.targetNum !== ng.targetNum;
+    });
+
+    for (const goal of added) {
+      await saveGoal(uid, goal);
+    }
+    for (const goal of modified) {
+      await saveGoal(uid, goal);
+    }
+    for (const goal of deleted) {
+      await deleteGoal(uid, goal.id);
+    }
+  };
+
+  const handleUpdateHabits = async (newHabits: Habit[]) => {
+    setHabits(newHabits);
+
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (isDemo) return;
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const added = newHabits.filter(nh => !habits.some(oh => oh.id === nh.id));
+    const deleted = habits.filter(oh => !newHabits.some(nh => nh.id === oh.id));
+    const modified = newHabits.filter(nh => {
+      const matched = habits.find(oh => oh.id === nh.id);
+      if (!matched) return false;
+      return matched.title !== nh.title ||
+             JSON.stringify(matched.history) !== JSON.stringify(nh.history);
+    });
+
+    for (const habit of added) {
+      await saveHabit(uid, habit);
+    }
+    for (const habit of modified) {
+      await saveHabit(uid, habit);
+    }
+    for (const habit of deleted) {
+      await dbDeleteHabit(uid, habit.id);
+    }
+  };
+
+  const handleUpdateUserContext = async (newContext: UserContext) => {
+    setUserContext(newContext);
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (isDemo) return;
+
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      await saveUserPreferences(uid, newContext);
+    }
+  };
+
+  const handleUpdatePeople = async (newPeople: Person[]) => {
+    setPeople(newPeople);
+
+    const isDemo = localStorage.getItem('donna_demo_mode') === 'true';
+    if (isDemo) return;
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const added = newPeople.filter(np => !people.some(op => op.id === np.id));
+    const deleted = people.filter(op => !newPeople.some(np => np.id === op.id));
+    const modified = newPeople.filter(np => {
+      const matched = people.find(op => op.id === np.id);
+      if (!matched) return false;
+      return matched.name !== np.name ||
+             matched.email !== np.email ||
+             matched.company !== np.company ||
+             matched.role !== np.role ||
+             matched.relationship !== np.relationship ||
+             matched.lastInteraction !== np.lastInteraction ||
+             matched.notes !== np.notes ||
+             JSON.stringify(matched.thingsToRemember) !== JSON.stringify(np.thingsToRemember) ||
+             matched.source !== np.source;
+    });
+
+    for (const person of added) {
+      await savePerson(uid, person);
+    }
+    for (const person of modified) {
+      await savePerson(uid, person);
+    }
+    for (const person of deleted) {
+      await deletePerson(uid, person.id);
+    }
   };
 
   const handleLoginSuccess = () => {
@@ -771,7 +1000,7 @@ export default function App() {
               <WarRoomView 
                 userContext={userContext}
                 tasks={tasks}
-                onUpdateTasks={setTasks}
+                onUpdateTasks={handleUpdateTasks}
                 events={events}
                 onUpdateEvents={handleUpdateEvents}
                 emails={emails}
@@ -803,7 +1032,7 @@ export default function App() {
                 chatHistory={chatHistory}
                 onUpdateChat={setChatHistory}
                 tasks={tasks}
-                onUpdateTasks={setTasks}
+                onUpdateTasks={handleUpdateTasks}
                 events={events}
                 onUpdateEvents={handleUpdateEvents}
                 emails={emails}
@@ -819,7 +1048,7 @@ export default function App() {
               <TasksView 
                 userContext={userContext}
                 tasks={tasks}
-                onUpdateTasks={setTasks}
+                onUpdateTasks={handleUpdateTasks}
                 onNavigate={handleNavigate}
               />
             </div>
@@ -856,7 +1085,7 @@ export default function App() {
             <div key="people" className="animate-fade-in w-full h-full">
               <PeopleView 
                 people={people}
-                onUpdatePeople={setPeople}
+                onUpdatePeople={handleUpdatePeople}
               />
             </div>
           )}
@@ -867,9 +1096,9 @@ export default function App() {
                 userContext={userContext}
                 goals={goals}
                 habits={habits}
-                onUpdateGoals={setGoals}
-                onUpdateHabits={setHabits}
-                onUpdateUserContext={setUserContext}
+                onUpdateGoals={handleUpdateGoals}
+                onUpdateHabits={handleUpdateHabits}
+                onUpdateUserContext={handleUpdateUserContext}
               />
             </div>
           )}
@@ -879,7 +1108,7 @@ export default function App() {
               <SettingsView 
                 userContext={userContext}
                 donnaMemory={donnaMemory}
-                onUpdateUserContext={setUserContext}
+                onUpdateUserContext={handleUpdateUserContext}
                 onUpdateDonnaMemory={setDonnaMemory}
               />
             </div>

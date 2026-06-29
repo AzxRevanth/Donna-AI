@@ -1,5 +1,11 @@
 export type PriorityLevel = 'URGENT' | 'HIGH' | 'NORMAL';
 
+export interface SubTask {
+  id: string;
+  title: string;
+  completed: boolean;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -9,6 +15,8 @@ export interface Task {
   completed: boolean;
   timeEstimate?: string; // Donna's estimated duration (e.g., "1.5h" or "45m")
   donnaNote?: string; // Donna's AI-generated reasoning or assessment
+  subtasks?: SubTask[];
+  reminderTime?: string; // e.g. "09:00" on due date
 }
 
 export interface CalendarEvent {
@@ -20,6 +28,9 @@ export interface CalendarEvent {
   attendees: string[]; // names of people attending
   description?: string;
   hasConflict?: boolean;
+  location?: string;
+  reminderMinutes?: number;
+  recurrence?: 'NONE' | 'DAILY' | 'WEEKLY';
 }
 
 export type RelationshipType = 'Client' | 'Colleague' | 'Manager' | 'Personal' | 'Vendor';
@@ -122,6 +133,12 @@ export interface UserContext {
   additionalContext?: string;
   assertivenessLevel?: number; // 0-100
   lastGmailSync?: string;
+  connectedServices?: {
+    gmail: boolean;
+    calendar: boolean;
+    tasks: boolean;
+    people: boolean;
+  };
 }
 
 export interface DonnaMemoryFact {

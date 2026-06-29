@@ -39,6 +39,91 @@ export default function SettingsView({
   const [newMemoryText, setNewMemoryText] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Connected services states
+  const [isLinkingGoogle, setIsLinkingGoogle] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleToggleService = async (serviceKey: 'gmail' | 'calendar' | 'tasks' | 'people', currentConnected: boolean) => {
+    const hasAccessToken = !!localStorage.getItem('donna_access_token');
+    setErrorMsg(null);
+    
+    if (currentConnected) {
+      // Disconnect service
+      const defaultConnected = !!localStorage.getItem('donna_access_token');
+      const currentServices = userContext.connectedServices || {
+        gmail: defaultConnected,
+        calendar: defaultConnected,
+        tasks: defaultConnected,
+        people: defaultConnected
+      };
+      const updatedServices = {
+        ...currentServices,
+        [serviceKey]: false
+      };
+      
+      // If all are disconnected, we can remove the access token to be clean
+      const anyStillConnected = Object.values(updatedServices).some(v => v);
+      if (!anyStillConnected) {
+        localStorage.removeItem('donna_access_token');
+      }
+
+      onUpdateUserContext({
+        ...userContext,
+        connectedServices: updatedServices
+      });
+    } else {
+      // Connect service
+      if (!hasAccessToken) {
+        setIsLinkingGoogle(true);
+        try {
+          const { linkWithPopup, GoogleAuthProvider } = await import('firebase/auth');
+          const { getGoogleProvider, auth } = await import('../firebase');
+          const provider = getGoogleProvider();
+          
+          if (!auth.currentUser) {
+            throw new Error("No authenticated user session found to connect Google.");
+          }
+          const result = await linkWithPopup(auth.currentUser, provider);
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          const accessToken = credential?.accessToken;
+          if (accessToken) {
+            localStorage.setItem('donna_demo_mode', 'false');
+            localStorage.setItem('donna_access_token', accessToken);
+            localStorage.setItem('donna_user_email', result.user.email || '');
+          } else {
+            throw new Error("No access token was returned by Google. Ensure permissions are allowed.");
+          }
+        } catch (err: any) {
+          console.error("Connecting Google failed:", err);
+          let msg = err.message || String(err);
+          if (err.code === 'auth/credential-already-in-use') {
+            msg = "This Google account is already linked to another secure ledger.";
+          }
+          setErrorMsg(msg);
+          setIsLinkingGoogle(false);
+          return;
+        }
+        setIsLinkingGoogle(false);
+      }
+
+      const defaultConnected = !!localStorage.getItem('donna_access_token');
+      const currentServices = userContext.connectedServices || {
+        gmail: defaultConnected,
+        calendar: defaultConnected,
+        tasks: defaultConnected,
+        people: defaultConnected
+      };
+      const updatedServices = {
+        ...currentServices,
+        [serviceKey]: true
+      };
+      onUpdateUserContext({
+        ...userContext,
+        connectedServices: updatedServices
+      });
+    }
+  };
+
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     const updated: UserContext = {
@@ -401,27 +486,57 @@ export default function SettingsView({
           </div>
 
           {/* CONNECTED ACCOUNTS CARD WITH STATUS SPOT */}
-          <div className="bg-[rgba(22,22,22,0.8)] backdrop-blur-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.4),0_8px_24px_rgba(0,0,0,0.3)] border border-white/[0.04] rounded-2xl p-5 space-y-3.5 select-none font-sans">
-            <div className="text-[11px] font-sans font-light text-[#8a8070] border-b border-white/[0.04] pb-2">
-              Connected Exchanges Integrator
+          <div className="bg-[rgba(22,22,22,0.8)] backdrop-blur-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.4),0_8px_24px_rgba(0,0,0,0.3)] border border-white/[0.04] rounded-2xl p-6 space-y-4 font-sans text-left">
+            <div className="text-[11px] font-sans font-medium tracking-wider text-[#c9a84c] uppercase border-b border-white/[0.04] pb-2 flex justify-between items-center select-none">
+              <span>Connected Services</span>
+              {isLinkingGoogle && <span className="text-[10px] text-neutral-500 animate-pulse">AUTHORIZING WORKSPACE...</span>}
             </div>
 
-            <div className="space-y-2.5">
-              <div className="flex justify-between items-center bg-black/20 border border-white/[0.04] p-3 rounded-xl">
-                <span className="text-[#f0ebe0] text-[13px] font-light">Google Calendar API Sync</span>
-                <span className="text-[10px] font-sans font-light text-[#43a047] bg-[#43a047]/10 border border-[#43a047]/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#43a047] animate-pulse" />
-                  <span>CONNECTED</span>
-                </span>
+            {errorMsg && (
+              <div className="text-[11px] text-red-400 font-sans p-2.5 bg-red-950/20 border border-red-500/10 rounded-xl select-none">
+                {errorMsg}
               </div>
+            )}
 
-              <div className="flex justify-between items-center bg-black/20 border border-white/[0.04] p-3 rounded-xl">
-                <span className="text-[#f0ebe0] text-[13px] font-light">Google Gmail API Sync</span>
-                <span className="text-[10px] font-sans font-light text-[#43a047] bg-[#43a047]/10 border border-[#43a047]/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#43a047] animate-pulse" />
-                  <span>CONNECTED</span>
-                </span>
-              </div>
+            <div className="space-y-3">
+              {[
+                { key: 'gmail', name: 'Google Gmail Sync', desc: 'Allows Donna to read and draft emails.' },
+                { key: 'calendar', name: 'Google Calendar Sync', desc: 'Allows Donna to list and manage meetings.' },
+                { key: 'tasks', name: 'Google Tasks Sync', desc: 'Allows Donna to sync your operational ledger.' },
+                { key: 'people', name: 'People Intelligence Sync', desc: 'Allows Donna to analyze email stakeholder dynamics.' }
+              ].map(service => {
+                const isServiceConnected = userContext.connectedServices 
+                  ? !!userContext.connectedServices[service.key as 'gmail' | 'calendar' | 'tasks' | 'people']
+                  : !!localStorage.getItem('donna_access_token');
+
+                return (
+                  <div key={service.key} className="flex flex-col sm:flex-row justify-between sm:items-center bg-black/20 border border-white/[0.04] p-4 rounded-xl gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[#f0ebe0] text-[13px] font-medium">{service.name}</span>
+                        {isServiceConnected ? (
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#43a047] shadow-[0_0_4px_#43a047]" />
+                        ) : (
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#4a4540]" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-500 font-light leading-relaxed">{service.desc}</p>
+                    </div>
+
+                    <button
+                      onClick={() => handleToggleService(service.key as any, isServiceConnected)}
+                      disabled={isLinkingGoogle}
+                      className={`h-8 px-4 rounded-full text-xs font-sans font-medium transition-all duration-200 active:scale-[0.97] cursor-pointer self-start sm:self-center shrink-0 ${
+                        isServiceConnected 
+                          ? 'border border-red-900/40 hover:bg-red-950/20 text-red-400' 
+                          : 'bg-[#c9a84c] hover:bg-[#ebd083] text-[#0c0c0c]'
+                      }`}
+                    >
+                      {isServiceConnected ? 'Disconnect' : 'Connect'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
